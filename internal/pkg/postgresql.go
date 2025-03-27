@@ -48,6 +48,8 @@ func installPostgresApt(version, repoURL string) error {
 		fmt.Sprintf(`sh -c 'echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] %s $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'`, repoURL),
 		"apt-get update",
 		fmt.Sprintf("apt-get install -y postgresql-%s", version),
+		"systemctl stop postgresql",
+		"systemctl disable postgresql",
 	}
 
 	for _, cmd := range cmds {

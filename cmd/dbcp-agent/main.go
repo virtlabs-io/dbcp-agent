@@ -66,21 +66,25 @@ func main() {
 		os.Exit(1)
 	}
 
-	// PostgreSQL installation
-	if err := pkg.InstallPostgreSQL(
-		cfg,
-		osInfo,
-	); err != nil {
-		logger.Error("PostgreSQL installation failed: %v", err)
-		os.Exit(1)
-	}
+	// This is the installation block
+	// TODO: We need to verify if the package is already installed before we try to install it, or else every time we start the application it will attemp to install
+	{
+		// PostgreSQL installation
+		if err := pkg.InstallPostgreSQL(
+			cfg,
+			osInfo,
+		); err != nil {
+			logger.Error("PostgreSQL installation failed: %v", err)
+			os.Exit(1)
+		}
 
-	// ETCD installation
-	etcdRepo := cfg.Repositories.ETCD.Sources[cfg.Repositories.ETCD.Default]
-	etcdRepoURL := etcdRepo["url"]
-	if err := pkg.InstallETCD(cfg, etcdRepoURL); err != nil {
-		logger.Error("ETCD installation failed: %v", err)
-		os.Exit(1)
+		// ETCD installation
+		etcdRepo := cfg.Repositories.ETCD.Sources[cfg.Repositories.ETCD.Default]
+		etcdRepoURL := etcdRepo["url"]
+		if err := pkg.InstallETCD(cfg, etcdRepoURL); err != nil {
+			logger.Error("ETCD installation failed: %v", err)
+			os.Exit(1)
+		}
 	}
 
 	// Start ETCD cluster (bootstrap or join)

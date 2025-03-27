@@ -19,13 +19,16 @@ node:
 
   etcd:
     version: "3.5.20"
-    cluster_mode: "bootstrap"  # or "join"
+    cluster_mode: "bootstrap"  # bootstrap or join
     data_dir: "/dbcp/data/etcd"
     bin_path: "/opt/etcd/bin"
-    peer_name: "etcd1"
-    cert_file: "/etc/etcd/certs/etcd.crt"
-    key_file: "/etc/etcd/certs/etcd.key"
-    ca_file: "/etc/etcd/certs/ca.crt"
+    peer_name: "node1"
+    # cert_file: "/etc/etcd/certs/etcd.crt"
+    # key_file: "/etc/etcd/certs/etcd.key"
+    # ca_file: "/etc/etcd/certs/ca.crt"
+    cert_file: ""
+    key_file: ""
+    ca_file: ""
     peer_port: 2380
     client_port: 2379
 
@@ -35,9 +38,12 @@ node:
 cluster:
   name: "pg-cluster-01"
   nodes:
-    - host: "192.168.56.101"
-    - host: "192.168.56.102"
-    - host: "192.168.56.103"
+    - name: node1
+      host: "192.168.56.101"
+    - name: node2
+      host: "192.168.56.102"
+    - name: node3
+      host: "192.168.56.103"
 
 repositories:
   postgresql:

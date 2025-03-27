@@ -46,6 +46,7 @@ type EtcdConfig struct {
 	CertFile    string `yaml:"cert_file"`
 	KeyFile     string `yaml:"key_file"`
 	CAFile      string `yaml:"ca_file"`
+	PeerName    string `yaml:"peer_name"`
 	PeerPort    int    `yaml:"peer_port"`
 	ClientPort  int    `yaml:"client_port"`
 	ClusterMode string `yaml:"cluster_mode"`
@@ -61,6 +62,7 @@ type ClusterConfig struct {
 }
 
 type ClusterNode struct {
+	Name string `yaml:"name"`
 	Host string `yaml:"host"`
 }
 
@@ -102,7 +104,6 @@ func (cfg *AgentConfig) Validate() error {
 	if pg.Version == "" || pg.DataDir == "" || pg.User == "" {
 		return fmt.Errorf("postgresql.version, data_dir, and user are required")
 	}
-
 	if pg.BinPath == "" {
 		defaultPath := guessPostgresBinPath()
 		logger.Warn("postgresql.bin_path not specified — using default: %s", defaultPath)
@@ -114,9 +115,15 @@ func (cfg *AgentConfig) Validate() error {
 	if etcd.Version == "" || etcd.DataDir == "" || etcd.PeerPort == 0 || etcd.ClientPort == 0 {
 		return fmt.Errorf("etcd.version, data_dir, peer_port, and client_port are required")
 	}
-	if etcd.CertFile == "" || etcd.KeyFile == "" || etcd.CAFile == "" {
-		return fmt.Errorf("etcd cert_file, key_file, and ca_file are required")
+	if etcd.PeerName == "" {
+		return fmt.Errorf("etcd.peer_name is required")
 	}
+
+	// Likely better to have a parameter to force or not TLS, but for now I'll leave it commented out
+	// if etcd.CertFile == "" || etcd.KeyFile == "" || etcd.CAFile == "" {
+	// 	return fmt.Errorf("etcd cert_file, key_file, and ca_file are required")
+	// }
+
 	if etcd.BinPath == "" {
 		logger.Warn("etcd.bin_path not specified — using default: /usr/local/bin")
 		cfg.Node.ETCD.BinPath = "/usr/local/bin"
@@ -128,11 +135,17 @@ func (cfg *AgentConfig) Validate() error {
 		return fmt.Errorf("invalid etcd.cluster_mode: must be 'bootstrap' or 'join'")
 	}
 
-	// Cluster
+	// Cluster nodes
 	if cfg.Cluster.Name == "" || len(cfg.Cluster.Nodes) == 0 {
 		return fmt.Errorf("cluster.name and at least one node are required")
 	}
+	for _, node := range cfg.Cluster.Nodes {
+		if node.Name == "" || node.Host == "" {
+			return fmt.Errorf("each cluster node must have name and host")
+		}
+	}
 
+	// Repositories
 	if repo := cfg.Repositories.PostgreSQL.Sources[cfg.Repositories.PostgreSQL.Default]; repo == nil {
 		return fmt.Errorf("postgresql repositories not found for default: %s", cfg.Repositories.PostgreSQL.Default)
 	}
@@ -143,7 +156,6 @@ func (cfg *AgentConfig) Validate() error {
 	return nil
 }
 
-// Best-effort guess for default PostgreSQL bin path based on OS
 func guessPostgresBinPath() string {
 	osRelease, _ := os.ReadFile("/etc/os-release")
 	content := string(osRelease)

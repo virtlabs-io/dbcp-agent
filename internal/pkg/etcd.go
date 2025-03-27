@@ -58,43 +58,158 @@ func InstallETCD(cfg *config.AgentConfig, repoURL string) error {
 
 func StartETCD(cfg *config.AgentConfig) error {
 	node := cfg.Node
-	cluster := cfg.Cluster
-
-	nodeName := strings.ReplaceAll(node.Host, ".", "-")
-	dataDir := node.ETCD.DataDir
-
-	initialCluster := []string{}
-	for _, peer := range cluster.Nodes {
-		peerName := strings.ReplaceAll(peer.Host, ".", "-")
-		entry := fmt.Sprintf("%s=https://%s:%d", peerName, peer.Host, node.ETCD.PeerPort)
-		initialCluster = append(initialCluster, entry)
-	}
+	protocol := getETCDProtocol(cfg)
 
 	args := []string{
-		fmt.Sprintf("--name=%s", nodeName),
-		fmt.Sprintf("--data-dir=%s", dataDir),
-		fmt.Sprintf("--initial-advertise-peer-urls=https://%s:%d", node.Host, node.ETCD.PeerPort),
-		fmt.Sprintf("--listen-peer-urls=https://0.0.0.0:%d", node.ETCD.PeerPort),
-		fmt.Sprintf("--listen-client-urls=https://0.0.0.0:%d", node.ETCD.ClientPort),
-		fmt.Sprintf("--advertise-client-urls=https://%s:%d", node.Host, node.ETCD.ClientPort),
-		fmt.Sprintf("--initial-cluster=%s", strings.Join(initialCluster, ",")),
-		"--initial-cluster-state=new",
-		fmt.Sprintf("--cert-file=%s", node.ETCD.CertFile),
-		fmt.Sprintf("--key-file=%s", node.ETCD.KeyFile),
-		fmt.Sprintf("--client-cert-auth=true"),
-		fmt.Sprintf("--trusted-ca-file=%s", node.ETCD.CAFile),
-		fmt.Sprintf("--peer-cert-file=%s", node.ETCD.CertFile),
-		fmt.Sprintf("--peer-key-file=%s", node.ETCD.KeyFile),
-		fmt.Sprintf("--peer-client-cert-auth=true"),
-		fmt.Sprintf("--peer-trusted-ca-file=%s", node.ETCD.CAFile),
+		"--name", node.ETCD.PeerName,
+		"--data-dir", node.ETCD.DataDir,
+		"--initial-advertise-peer-urls", fmt.Sprintf("%s://%s:%d", protocol, node.Host, node.ETCD.PeerPort),
+		"--listen-peer-urls", fmt.Sprintf("%s://0.0.0.0:%d", protocol, node.ETCD.PeerPort),
+		"--listen-client-urls", fmt.Sprintf("%s://0.0.0.0:%d", protocol, node.ETCD.ClientPort),
+		"--advertise-client-urls", fmt.Sprintf("%s://%s:%d", protocol, node.Host, node.ETCD.ClientPort),
+		"--initial-cluster-state", "new",
 	}
+
+	// Build initial-cluster string
+	var peers []string
+	for _, peer := range cfg.Cluster.Nodes {
+		peers = append(peers, fmt.Sprintf("%s=%s://%s:%d", peer.Name, protocol, peer.Host, node.ETCD.PeerPort))
+	}
+	initialCluster := strings.Join(peers, ",")
+	args = append(args, "--initial-cluster", initialCluster)
+
+	// TLS if configured
+	appendETCDTLSArgs(cfg, &args)
 
 	cmd := exec.Command(filepath.Join(node.ETCD.BinPath, "etcd"), args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
-	logger.Info("Starting ETCD as '%s'...", nodeName)
+	logger.Info("Starting ETCD as '%s'...", node.ETCD.PeerName)
 	return cmd.Start()
+}
+
+func StartETCDCluster(cfg *config.AgentConfig) error {
+	switch cfg.Node.ETCD.ClusterMode {
+	case "bootstrap":
+		logger.Info("ETCD cluster mode: bootstrap")
+		return StartETCD(cfg)
+	case "join":
+		logger.Info("ETCD cluster mode: join — discovering peers")
+		return joinETCDCluster(cfg)
+	default:
+		return fmt.Errorf("unsupported etcd.cluster_mode: %s", cfg.Node.ETCD.ClusterMode)
+	}
+}
+
+func joinETCDCluster(cfg *config.AgentConfig) error {
+	protocol := getETCDProtocol(cfg)
+	args := []string{}
+
+	if cfg.Node.ETCD.CertFile != "" {
+		args = append(args,
+			"--cacert", cfg.Node.ETCD.CAFile,
+			"--cert", cfg.Node.ETCD.CertFile,
+			"--key", cfg.Node.ETCD.KeyFile,
+		)
+	}
+
+	var foundPeer string
+	for _, peer := range cfg.Cluster.Nodes {
+		if peer.Host == cfg.Node.Host {
+			continue
+		}
+		url := fmt.Sprintf("%s://%s:%d/health", protocol, peer.Host, cfg.Node.ETCD.ClientPort)
+		logger.Info("Checking ETCD peer health at %s", url)
+
+		curlArgs := append(args, "-s", url)
+		cmd := exec.Command("curl", curlArgs...)
+		output, err := cmd.CombinedOutput()
+		if err == nil && strings.Contains(string(output), "true") {
+			foundPeer = peer.Host
+			break
+		}
+	}
+
+	if foundPeer == "" {
+		return fmt.Errorf("could not find healthy peer to join")
+	}
+
+	logger.Info("Found peer %s — sending join request...", foundPeer)
+	peerURL := fmt.Sprintf("%s://%s:%d", protocol, cfg.Node.Host, cfg.Node.ETCD.PeerPort)
+
+	ctlArgs := append([]string{
+		"--endpoints", fmt.Sprintf("%s://%s:%d", protocol, foundPeer, cfg.Node.ETCD.ClientPort),
+		"member", "add", cfg.Node.ETCD.PeerName,
+		fmt.Sprintf("--peer-urls=%s", peerURL),
+	}, args...)
+
+	cmd := exec.Command(filepath.Join(cfg.Node.ETCD.BinPath, "etcdctl"), ctlArgs...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		logger.Error("Failed to add node to cluster: %v\nOutput: %s", err, string(output))
+		return err
+	}
+
+	logger.Info("Node added to cluster. Starting with 'existing' state...")
+	return StartETCDWithState(cfg, "existing")
+}
+
+func StartETCDWithState(cfg *config.AgentConfig, state string) error {
+	node := cfg.Node
+	protocol := getETCDProtocol(cfg)
+
+	var peers []string
+	for _, peer := range cfg.Cluster.Nodes {
+		peers = append(peers, fmt.Sprintf("%s=%s://%s:%d", peer.Name, protocol, peer.Host, node.ETCD.PeerPort))
+	}
+	initialCluster := strings.Join(peers, ",")
+
+	args := []string{
+		"--name", node.ETCD.PeerName,
+		"--data-dir", node.ETCD.DataDir,
+		"--initial-advertise-peer-urls", fmt.Sprintf("%s://%s:%d", protocol, node.Host, node.ETCD.PeerPort),
+		"--listen-peer-urls", fmt.Sprintf("%s://0.0.0.0:%d", protocol, node.ETCD.PeerPort),
+		"--listen-client-urls", fmt.Sprintf("%s://0.0.0.0:%d", protocol, node.ETCD.ClientPort),
+		"--advertise-client-urls", fmt.Sprintf("%s://%s:%d", protocol, node.Host, node.ETCD.ClientPort),
+		"--initial-cluster", initialCluster,
+		"--initial-cluster-state", state,
+	}
+
+	appendETCDTLSArgs(cfg, &args)
+
+	cmd := exec.Command(filepath.Join(node.ETCD.BinPath, "etcd"), args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	logger.Info("Starting ETCD '%s' with cluster-state=%s", node.ETCD.PeerName, state)
+	return cmd.Start()
+}
+
+func getETCDProtocol(cfg *config.AgentConfig) string {
+	if cfg.Node.ETCD.CertFile != "" && cfg.Node.ETCD.KeyFile != "" && cfg.Node.ETCD.CAFile != "" {
+		return "https"
+	}
+	return "http"
+}
+
+func appendETCDTLSArgs(cfg *config.AgentConfig, args *[]string) {
+	node := cfg.Node
+	if node.ETCD.CertFile == "" || node.ETCD.KeyFile == "" || node.ETCD.CAFile == "" {
+		logger.Warn("TLS is not configured — running ETCD in insecure mode")
+		return
+	}
+
+	*args = append(*args,
+		"--cert-file", node.ETCD.CertFile,
+		"--key-file", node.ETCD.KeyFile,
+		"--trusted-ca-file", node.ETCD.CAFile,
+		"--client-cert-auth",
+		"--peer-cert-file", node.ETCD.CertFile,
+		"--peer-key-file", node.ETCD.KeyFile,
+		"--peer-trusted-ca-file", node.ETCD.CAFile,
+		"--peer-client-cert-auth",
+	)
 }
 
 func downloadFile(target string, url string) error {
@@ -155,99 +270,4 @@ func extractTarGz(gzPath string, dest string) error {
 		}
 	}
 	return nil
-}
-
-func StartETCDCluster(cfg *config.AgentConfig) error {
-	mode := cfg.Node.ETCD.ClusterMode
-	if mode == "bootstrap" {
-		logger.Info("ETCD cluster mode: bootstrap")
-		return StartETCD(cfg)
-	}
-
-	logger.Info("ETCD cluster mode: join — attempting to discover peers...")
-	var foundPeer string
-	for _, peer := range cfg.Cluster.Nodes {
-		if peer.Host == cfg.Node.Host {
-			continue
-		}
-
-		healthURL := fmt.Sprintf("https://%s:%d/health", peer.Host, cfg.Node.ETCD.ClientPort)
-		logger.Info("Checking ETCD peer health at %s", healthURL)
-
-		cmd := exec.Command("curl", "--cacert", cfg.Node.ETCD.CAFile,
-			"--cert", cfg.Node.ETCD.CertFile,
-			"--key", cfg.Node.ETCD.KeyFile,
-			"-s", healthURL)
-		output, err := cmd.CombinedOutput()
-		if err == nil && strings.Contains(string(output), "true") {
-			foundPeer = peer.Host
-			break
-		}
-	}
-
-	if foundPeer == "" {
-		return fmt.Errorf("could not find any healthy ETCD peers to join")
-	}
-
-	logger.Info("Found healthy ETCD node at %s — attempting to join...", foundPeer)
-	nodeName := strings.ReplaceAll(cfg.Node.Host, ".", "-")
-	peerURL := fmt.Sprintf("https://%s:%d", cfg.Node.Host, cfg.Node.ETCD.PeerPort)
-
-	cmd := exec.Command(filepath.Join(cfg.Node.ETCD.BinPath, "etcdctl"),
-		"--endpoints", fmt.Sprintf("https://%s:%d", foundPeer, cfg.Node.ETCD.ClientPort),
-		"--cacert", cfg.Node.ETCD.CAFile,
-		"--cert", cfg.Node.ETCD.CertFile,
-		"--key", cfg.Node.ETCD.KeyFile,
-		"member", "add", nodeName,
-		fmt.Sprintf("--peer-urls=%s", peerURL),
-	)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		logger.Error("Failed to add node to cluster: %v\nOutput: %s", err, string(output))
-		return err
-	}
-
-	logger.Info("Successfully added node to ETCD cluster: %s", string(output))
-	return StartETCDWithState(cfg, "existing")
-}
-
-func StartETCDWithState(cfg *config.AgentConfig, state string) error {
-	node := cfg.Node
-	cluster := cfg.Cluster
-
-	nodeName := strings.ReplaceAll(node.Host, ".", "-")
-	dataDir := node.ETCD.DataDir
-
-	initialCluster := []string{}
-	for _, peer := range cluster.Nodes {
-		peerName := strings.ReplaceAll(peer.Host, ".", "-")
-		entry := fmt.Sprintf("%s=https://%s:%d", peerName, peer.Host, node.ETCD.PeerPort)
-		initialCluster = append(initialCluster, entry)
-	}
-
-	args := []string{
-		fmt.Sprintf("--name=%s", nodeName),
-		fmt.Sprintf("--data-dir=%s", dataDir),
-		fmt.Sprintf("--initial-advertise-peer-urls=https://%s:%d", node.Host, node.ETCD.PeerPort),
-		fmt.Sprintf("--listen-peer-urls=https://0.0.0.0:%d", node.ETCD.PeerPort),
-		fmt.Sprintf("--listen-client-urls=https://0.0.0.0:%d", node.ETCD.ClientPort),
-		fmt.Sprintf("--advertise-client-urls=https://%s:%d", node.Host, node.ETCD.ClientPort),
-		fmt.Sprintf("--initial-cluster=%s", strings.Join(initialCluster, ",")),
-		fmt.Sprintf("--initial-cluster-state=%s", state),
-		fmt.Sprintf("--cert-file=%s", node.ETCD.CertFile),
-		fmt.Sprintf("--key-file=%s", node.ETCD.KeyFile),
-		fmt.Sprintf("--client-cert-auth=true"),
-		fmt.Sprintf("--trusted-ca-file=%s", node.ETCD.CAFile),
-		fmt.Sprintf("--peer-cert-file=%s", node.ETCD.CertFile),
-		fmt.Sprintf("--peer-key-file=%s", node.ETCD.KeyFile),
-		fmt.Sprintf("--peer-client-cert-auth=true"),
-		fmt.Sprintf("--peer-trusted-ca-file=%s", node.ETCD.CAFile),
-	}
-
-	cmd := exec.Command(filepath.Join(node.ETCD.BinPath, "etcd"), args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	logger.Info("Starting ETCD node '%s' with state '%s'...", nodeName, state)
-	return cmd.Start()
 }
