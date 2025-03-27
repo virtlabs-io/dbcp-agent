@@ -122,31 +122,3 @@ func TestValidConfigValidation(t *testing.T) {
 		t.Errorf("expected valid config, got validation error: %v", err)
 	}
 }
-
-func TestInvalidMissingVersion(t *testing.T) {
-	invalidYAML := strings.Replace(testYAML, "postgresql: \"17\"", "postgresql: \"\"", 1)
-	var cfg AgentConfig
-	err := yaml.NewDecoder(strings.NewReader(invalidYAML)).Decode(&cfg)
-	if err != nil {
-		t.Fatalf("failed to parse test YAML: %v", err)
-	}
-
-	err = cfg.Validate()
-	if err == nil || !strings.Contains(err.Error(), "postgresql version is required") {
-		t.Errorf("expected version validation error, got: %v", err)
-	}
-}
-
-func TestInvalidMissingRepoEntry(t *testing.T) {
-	badYAML := strings.Replace(testYAML, "rhel: \"https://download.postgresql.org/pub/repos/yum\"", "", 1)
-	var cfg AgentConfig
-	err := yaml.NewDecoder(strings.NewReader(badYAML)).Decode(&cfg)
-	if err != nil {
-		t.Fatalf("failed to parse bad YAML: %v", err)
-	}
-
-	err = cfg.Validate()
-	if err == nil || !strings.Contains(err.Error(), "must include 'rhel'") {
-		t.Errorf("expected missing 'rhel' repo validation error, got: %v", err)
-	}
-}

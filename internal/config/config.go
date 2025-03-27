@@ -53,7 +53,31 @@ type EtcdConfig struct {
 }
 
 type PatroniConfig struct {
-	ConfigPath string `yaml:"config_path"`
+	ConfigPath   string      `yaml:"config_path"`
+	TemplatePath string      `yaml:"template_path"`
+	APIListen    string      `yaml:"api_listen"`
+	EtcdHost     string      `yaml:"etcd_host"`
+	PGPort       int         `yaml:"pg_port"`
+	Superuser    PatroniUser `yaml:"superuser"`
+	Replication  PatroniUser `yaml:"replication"`
+	AdminUser    PatroniUser `yaml:"admin"`
+	UsePGRewind  bool        `yaml:"use_pg_rewind"`
+	UseSlots     bool        `yaml:"use_slots"`
+	InitDB       []string    `yaml:"initdb"`
+	DCS          DCSSettings `yaml:"dcs"`
+}
+
+type PatroniUser struct {
+	Username string   `yaml:"username"`
+	Password string   `yaml:"password"`
+	Options  []string `yaml:"options"`
+}
+
+type DCSSettings struct {
+	TTL                  int `yaml:"ttl"`
+	LoopWait             int `yaml:"loop_wait"`
+	RetryTimeout         int `yaml:"retry_timeout"`
+	MaximumLagOnFailover int `yaml:"maximum_lag_on_failover"`
 }
 
 type ClusterConfig struct {
@@ -75,6 +99,8 @@ type RepoEntry struct {
 	Default string                       `yaml:"default"`
 	Sources map[string]map[string]string `yaml:"sources"`
 }
+
+// -----------------------
 
 func Load(path string) (*AgentConfig, error) {
 	data, err := os.ReadFile(path)
