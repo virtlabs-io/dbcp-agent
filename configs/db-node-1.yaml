@@ -9,6 +9,7 @@ node:
   host: "192.168.56.101"
   role: "database"
   tmp_path: /dbcp/tmp
+  allow_restart_services: true  # or false
 
   postgresql:
     version: "16"

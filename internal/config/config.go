@@ -23,12 +23,13 @@ type AgentConfig struct {
 }
 
 type NodeConfig struct {
-	Host       string           `yaml:"host"`
-	Role       string           `yaml:"role"`
-	TmpPath    string           `yaml:"tmp_path"`
-	PostgreSQL PostgreSQLConfig `yaml:"postgresql"`
-	ETCD       EtcdConfig       `yaml:"etcd"`
-	Patroni    PatroniConfig    `yaml:"patroni"`
+	Host                 string           `yaml:"host"`
+	Role                 string           `yaml:"role"`
+	TmpPath              string           `yaml:"tmp_path"`
+	AllowRestartServices bool             `yaml:"allow_restart_services"`
+	PostgreSQL           PostgreSQLConfig `yaml:"postgresql"`
+	ETCD                 EtcdConfig       `yaml:"etcd"`
+	Patroni              PatroniConfig    `yaml:"patroni"`
 }
 
 type PostgreSQLConfig struct {

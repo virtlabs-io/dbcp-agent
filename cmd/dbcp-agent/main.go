@@ -67,16 +67,9 @@ func main() {
 	}
 
 	// PostgreSQL installation
-	pgRepo := cfg.Repositories.PostgreSQL.Sources[cfg.Repositories.PostgreSQL.Default]
-	pgRepoURL := pgRepo[osInfo.Family]
 	if err := pkg.InstallPostgreSQL(
-		cfg.Node.PostgreSQL.Version,
+		cfg,
 		osInfo,
-		pgRepoURL,
-		cfg.Node.PostgreSQL.BinPath,
-		cfg.Node.PostgreSQL.DataDir,
-		cfg.Node.PostgreSQL.User,
-		cfg.Node.TmpPath, // ✅ New: pass tmp_path
 	); err != nil {
 		logger.Error("PostgreSQL installation failed: %v", err)
 		os.Exit(1)

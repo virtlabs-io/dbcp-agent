@@ -2,35 +2,40 @@ package pkg
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 
+	"github.com/virtlabs-io/dbcp-client/internal/config"
 	"github.com/virtlabs-io/dbcp-client/internal/logger"
 	"github.com/virtlabs-io/dbcp-client/internal/system"
 )
 
-func InstallPostgreSQL(version string, osInfo *system.OSInfo, repoURL string, binPath string, dataDir string, user string, tmpPath string) error {
-	logger.Info("Preparing to install PostgreSQL version %s...", version)
+func InstallPostgreSQL(cfg *config.AgentConfig, osInfo *system.OSInfo) error {
+	logger.Info("Preparing to install PostgreSQL version %s...", cfg.Node.PostgreSQL.Version)
+
+	pgRepo := cfg.Repositories.PostgreSQL.Sources[cfg.Repositories.PostgreSQL.Default]
+	pgRepoURL := pgRepo[osInfo.Family]
 
 	switch osInfo.ID {
 	case "debian", "ubuntu":
-		if err := installPostgresApt(version, repoURL); err != nil {
+		if err := installPostgresApt(cfg.Node.PostgreSQL.Version, pgRepoURL); err != nil {
 			return err
 		}
 	case "rhel", "centos", "rocky", "almalinux", "oracle", "fedora":
-		if err := installPostgresRpm(version, osInfo.VersionID, repoURL, tmpPath); err != nil {
+		if err := installPostgresRpm(cfg.Node.PostgreSQL.Version, osInfo.VersionID, pgRepoURL, cfg.Node.TmpPath); err != nil {
 			return err
 		}
 	default:
 		return fmt.Errorf("unsupported OS: %s", osInfo.ID)
 	}
 
-	if err := startPostgreSQLService(binPath, dataDir, user); err != nil {
+	if err := startPostgreSQLService(cfg); err != nil {
 		return err
 	}
 
-	logger.Info("PostgreSQL %s installation and startup complete.", version)
+	logger.Info("PostgreSQL %s installation and startup complete.", cfg.Node.PostgreSQL.Version)
 	return nil
 }
 
@@ -75,10 +80,20 @@ func installPostgresRpm(version, osVersion, repoBaseURL, tmpPath string) error {
 	return nil
 }
 
-func startPostgreSQLService(binPath, dataDir, user string) error {
+func startPostgreSQLService(cfg *config.AgentConfig) error {
+	if isPortInUse(5432) {
+		if !cfg.Node.AllowRestartServices {
+			logger.Warn("PostgreSQL appears to be running. Aborting due to config.")
+			return fmt.Errorf("port 5432 is already in use")
+		}
+
+		logger.Warn("PostgreSQL appears to be running. Attempting to stop existing process...")
+		stopPostgresProcess(cfg) // maybe using pg_ctl stop or systemd
+	}
+
 	if _, err := exec.LookPath("systemctl"); err == nil {
 		logger.Info("Using systemctl to start PostgreSQL")
-		cmd := exec.Command("bash", "-c", "systemctl enable postgresql && systemctl start postgresql")
+		cmd := exec.Command("bash", "-c", "systemctl start postgresql")
 		output, err := cmd.CombinedOutput()
 		if err != nil {
 			logger.Error("Failed to start PostgreSQL with systemctl: %v\nOutput: %s", err, string(output))
@@ -87,21 +102,30 @@ func startPostgreSQLService(binPath, dataDir, user string) error {
 		return nil
 	}
 
-	logger.Info("systemctl not found — running in Docker mode")
+	logger.Info("systemctl not found")
 
-	if err := ensureUser(user); err != nil {
+	if err := ensureUser(cfg.Node.PostgreSQL.User); err != nil {
 		return err
 	}
 
-	chownCmd := exec.Command("chown", "-R", fmt.Sprintf("%s:%s", user, user), dataDir)
+	chownCmd := exec.Command("chown", "-R", fmt.Sprintf("%s:%s",
+		cfg.Node.PostgreSQL.User,
+		cfg.Node.PostgreSQL.User),
+		cfg.Node.PostgreSQL.DataDir)
 	if output, err := chownCmd.CombinedOutput(); err != nil {
 		logger.Warn("Failed to chown data dir: %v\nOutput: %s", err, string(output))
 		return err
 	}
 
-	if _, err := os.Stat(filepath.Join(dataDir, "PG_VERSION")); os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(cfg.Node.PostgreSQL.DataDir, "PG_VERSION")); os.IsNotExist(err) {
 		logger.Warn("Initializing PostgreSQL data directory...")
-		cmd := exec.Command("su", "-", user, "-c", fmt.Sprintf("PATH=%s:$PATH %s/initdb -D %s", binPath, binPath, dataDir))
+		cmd := exec.Command("su", "-",
+			cfg.Node.PostgreSQL.User,
+			"-c",
+			fmt.Sprintf("PATH=%s:$PATH %s/initdb -D %s",
+				cfg.Node.PostgreSQL.BinPath,
+				cfg.Node.PostgreSQL.BinPath,
+				cfg.Node.PostgreSQL.DataDir))
 		output, err := cmd.CombinedOutput()
 		if err != nil {
 			logger.Error("initdb failed: %v\nOutput: %s", err, string(output))
@@ -110,8 +134,14 @@ func startPostgreSQLService(binPath, dataDir, user string) error {
 		logger.Info("PostgreSQL data directory initialized.")
 	}
 
-	logFile := filepath.Join(dataDir, "postgres.log")
-	cmd := exec.Command("su", "-", user, "-c", fmt.Sprintf("PATH=%s:$PATH %s/pg_ctl -D %s -l %s start", binPath, binPath, dataDir, logFile))
+	logFile := filepath.Join(cfg.Node.PostgreSQL.DataDir, "postgres.log")
+	cmd := exec.Command("su", "-",
+		cfg.Node.PostgreSQL.User,
+		"-c",
+		fmt.Sprintf("PATH=%s:$PATH %s/pg_ctl -D %s -l %s start",
+			cfg.Node.PostgreSQL.BinPath,
+			cfg.Node.PostgreSQL.BinPath,
+			cfg.Node.PostgreSQL.DataDir, logFile))
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		logger.Error("pg_ctl failed: %v\nOutput: %s", err, string(output))
@@ -146,4 +176,24 @@ func runCommand(command string) error {
 		return err
 	}
 	return nil
+}
+
+func isPortInUse(port int) bool {
+	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+	if err != nil {
+		return true // port is already in use
+	}
+	_ = ln.Close()
+	return false
+}
+
+func stopPostgresProcess(cfg *config.AgentConfig) {
+	cmd := exec.Command(filepath.Join(cfg.Node.PostgreSQL.BinPath, "pg_ctl"),
+		"-D", cfg.Node.PostgreSQL.DataDir,
+		"stop")
+	if err := cmd.Run(); err != nil {
+		logger.Error("Failed to stop PostgreSQL gracefully: %v", err)
+	} else {
+		logger.Info("Stopped running PostgreSQL instance")
+	}
 }
