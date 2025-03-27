@@ -1,0 +1,51 @@
+scope: {{ .ClusterName }}
+name: {{ .NodeName }}
+
+restapi:
+  listen: {{ .APIListen }}
+  connect_address: {{ .APIListen }}
+
+etcd:
+  host: {{ .EtcdHost }}
+
+bootstrap:
+  dcs:
+    ttl: {{ .DCS.TTL }}
+    loop_wait: {{ .DCS.LoopWait }}
+    retry_timeout: {{ .DCS.RetryTimeout }}
+    maximum_lag_on_failover: {{ .DCS.MaximumLagOnFailover }}
+    postgresql:
+      use_pg_rewind: {{ .UsePGRewind }}
+      use_slots: {{ .UseSlots }}
+
+  initdb:
+{{- range .InitDB }}
+    - {{ . }}
+{{- end }}
+
+  users:
+    admin:
+      username: {{ .AdminUser.Username }}
+      password: {{ .AdminUser.Password }}
+      options:
+{{- range .AdminUser.Options }}
+        - {{ . }}
+{{- end }}
+
+postgresql:
+  listen: {{ .Host }}:{{ .PGPort }}
+  connect_address: {{ .Host }}:{{ .PGPort }}
+  data_dir: {{ .PGDataDir }}
+  bin_dir: {{ .PGBinDir }}
+
+  authentication:
+    superuser:
+      username: {{ .SuperUser.Username }}
+      password: {{ .SuperUser.Password }}
+    replication:
+      username: {{ .Replication.Username }}
+      password: {{ .Replication.Password }}
+
+  parameters:
+    wal_level: replica
+    hot_standby: "on"
