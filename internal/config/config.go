@@ -91,15 +91,35 @@ func Load(path string) (*AgentConfig, error) {
 }
 
 func (cfg *AgentConfig) Validate() error {
+	if err := cfg.validateNode(); err != nil {
+		return err
+	}
+	if err := cfg.validatePostgreSQL(); err != nil {
+		return err
+	}
+	if err := cfg.validateETCD(); err != nil {
+		return err
+	}
+	if err := cfg.validateCluster(); err != nil {
+		return err
+	}
+	if err := cfg.validateRepositories(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (cfg *AgentConfig) validateNode() error {
 	if cfg.Node.Host == "" || cfg.Node.Role == "" {
 		return fmt.Errorf("node.host and node.role are required")
 	}
-
 	if cfg.Node.TmpPath == "" {
 		return fmt.Errorf("node.tmp_path is required")
 	}
+	return nil
+}
 
-	// PostgreSQL
+func (cfg *AgentConfig) validatePostgreSQL() error {
 	pg := cfg.Node.PostgreSQL
 	if pg.Version == "" || pg.DataDir == "" || pg.User == "" {
 		return fmt.Errorf("postgresql.version, data_dir, and user are required")
@@ -109,8 +129,10 @@ func (cfg *AgentConfig) Validate() error {
 		logger.Warn("postgresql.bin_path not specified — using default: %s", defaultPath)
 		cfg.Node.PostgreSQL.BinPath = defaultPath
 	}
+	return nil
+}
 
-	// ETCD
+func (cfg *AgentConfig) validateETCD() error {
 	etcd := cfg.Node.ETCD
 	if etcd.Version == "" || etcd.DataDir == "" || etcd.PeerPort == 0 || etcd.ClientPort == 0 {
 		return fmt.Errorf("etcd.version, data_dir, peer_port, and client_port are required")
@@ -118,12 +140,6 @@ func (cfg *AgentConfig) Validate() error {
 	if etcd.PeerName == "" {
 		return fmt.Errorf("etcd.peer_name is required")
 	}
-
-	// Likely better to have a parameter to force or not TLS, but for now I'll leave it commented out
-	// if etcd.CertFile == "" || etcd.KeyFile == "" || etcd.CAFile == "" {
-	// 	return fmt.Errorf("etcd cert_file, key_file, and ca_file are required")
-	// }
-
 	if etcd.BinPath == "" {
 		logger.Warn("etcd.bin_path not specified — using default: /usr/local/bin")
 		cfg.Node.ETCD.BinPath = "/usr/local/bin"
@@ -134,8 +150,10 @@ func (cfg *AgentConfig) Validate() error {
 	} else if etcd.ClusterMode != "bootstrap" && etcd.ClusterMode != "join" {
 		return fmt.Errorf("invalid etcd.cluster_mode: must be 'bootstrap' or 'join'")
 	}
+	return nil
+}
 
-	// Cluster nodes
+func (cfg *AgentConfig) validateCluster() error {
 	if cfg.Cluster.Name == "" || len(cfg.Cluster.Nodes) == 0 {
 		return fmt.Errorf("cluster.name and at least one node are required")
 	}
@@ -144,15 +162,16 @@ func (cfg *AgentConfig) Validate() error {
 			return fmt.Errorf("each cluster node must have name and host")
 		}
 	}
+	return nil
+}
 
-	// Repositories
+func (cfg *AgentConfig) validateRepositories() error {
 	if repo := cfg.Repositories.PostgreSQL.Sources[cfg.Repositories.PostgreSQL.Default]; repo == nil {
 		return fmt.Errorf("postgresql repositories not found for default: %s", cfg.Repositories.PostgreSQL.Default)
 	}
 	if repo := cfg.Repositories.ETCD.Sources[cfg.Repositories.ETCD.Default]; repo == nil {
 		return fmt.Errorf("etcd repositories not found for default: %s", cfg.Repositories.ETCD.Default)
 	}
-
 	return nil
 }
 
