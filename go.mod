@@ -2,8 +2,8 @@ module github.com/virtlabs-io/dbcp-client
 
 go 1.22
 
-replace github.com/virtlabs-io/dbcp-client => .
+// replace github.com/virtlabs-io/dbcp-client => .
 
 require gopkg.in/yaml.v3 v3.0.1
 
-require gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
+require gopkg.in/natefinch/lumberjack.v2 v2.2.1
