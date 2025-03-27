@@ -18,15 +18,20 @@ import (
 func InstallETCD(cfg *config.AgentConfig, repoURL string) error {
 	logger.Info("Installing ETCD version %s...", cfg.Node.ETCD.Version)
 
-	etcdURL := fmt.Sprintf("%s/v%s/etcd-v%s-linux-amd64.tar.gz", strings.TrimSuffix(repoURL, "/"), cfg.Node.ETCD.Version, cfg.Node.ETCD.Version)
-	archivePath := filepath.Join(cfg.Node.TmpPath, fmt.Sprintf("etcd-v%s-linux-amd64.tar.gz", cfg.Node.ETCD.Version))
-	extractDir := filepath.Join(cfg.Node.TmpPath, fmt.Sprintf("etcd-v%s", cfg.Node.ETCD.Version))
+	etcdURL := fmt.Sprintf("%s/v%s/etcd-v%s-linux-amd64.tar.gz",
+		strings.TrimSuffix(repoURL, "/"),
+		cfg.Node.ETCD.Version,
+		cfg.Node.ETCD.Version,
+	)
+
+	archivePath := fmt.Sprintf("/tmp/etcd-v%s-linux-amd64.tar.gz", cfg.Node.ETCD.Version)
 
 	logger.Info("Downloading ETCD from %s", etcdURL)
 	if err := downloadFile(archivePath, etcdURL); err != nil {
 		return fmt.Errorf("failed to download etcd: %w", err)
 	}
 
+	extractDir := filepath.Join("/tmp", fmt.Sprintf("etcd-v%s", cfg.Node.ETCD.Version))
 	if err := extractTarGz(archivePath, extractDir); err != nil {
 		return fmt.Errorf("failed to extract etcd: %w", err)
 	}
@@ -41,6 +46,9 @@ func InstallETCD(cfg *config.AgentConfig, repoURL string) error {
 		dst := filepath.Join(binDir, bin)
 		if err := os.Rename(src, dst); err != nil {
 			return fmt.Errorf("failed to move %s: %w", bin, err)
+		}
+		if err := os.Chmod(dst, 0755); err != nil {
+			return fmt.Errorf("failed to chmod %s: %w", dst, err)
 		}
 	}
 

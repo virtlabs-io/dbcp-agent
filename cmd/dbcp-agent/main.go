@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,14 +13,19 @@ import (
 )
 
 func main() {
-	cfgPath := os.Getenv("AGENT_CONFIG")
-	if cfgPath == "" {
-		cfgPath = "configs/agent-config.yaml"
-	}
+	var configPath string
+	flag.StringVar(&configPath, "config", "./configs/agent-config.yaml", "Path to configuration file")
+	flag.StringVar(&configPath, "c", "./configs/agent-config.yaml", "Path to configuration file (shorthand)")
+	flag.Parse()
 
-	cfg, err := config.Load(cfgPath)
+	cfg, err := config.Load(configPath)
 	if err != nil {
 		fmt.Printf("Failed to load config: %v\n", err)
+		os.Exit(1)
+	}
+
+	if err := cfg.Validate(); err != nil {
+		fmt.Printf("Invalid config: %v\n", err)
 		os.Exit(1)
 	}
 

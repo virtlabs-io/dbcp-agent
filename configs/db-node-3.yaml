@@ -6,7 +6,7 @@ log_max_backups: 3 # number of old logs to keep
 log_max_age_days: 7 # days to keep old logs
 
 node:
-  host: "node1.example.com"
+  host: "192.168.56.103"
   role: "database"
   tmp_path: /dbcp/tmp
 
@@ -34,9 +34,9 @@ node:
 cluster:
   name: "pg-cluster-01"
   nodes:
-    - host: "node1.example.com"
-    - host: "node2.example.com"
-    - host: "node3.example.com"
+    - host: "192.168.56.101"
+    - host: "192.168.56.102"
+    - host: "192.168.56.103"
 
 repositories:
   postgresql:
