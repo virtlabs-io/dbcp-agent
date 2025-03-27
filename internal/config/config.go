@@ -5,7 +5,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/virtlabs-io/dbcp-client/internal/logger"
+	"github.com/virtlabs-io/dbcp-agent/internal/logger"
 	"gopkg.in/yaml.v3"
 )
 

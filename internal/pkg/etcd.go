@@ -11,8 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/virtlabs-io/dbcp-client/internal/config"
-	"github.com/virtlabs-io/dbcp-client/internal/logger"
+	"github.com/virtlabs-io/dbcp-agent/internal/config"
+	"github.com/virtlabs-io/dbcp-agent/internal/logger"
 )
 
 func InstallETCD(cfg *config.AgentConfig, repoURL string) error {

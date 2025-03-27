@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/virtlabs-io/dbcp-client/internal/logger"
+	"github.com/virtlabs-io/dbcp-agent/internal/logger"
 )
 
 // CreateDirs ensures required directories exist and are properly permissioned.

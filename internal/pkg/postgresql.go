@@ -7,9 +7,9 @@ import (
 	"os/exec"
 	"path/filepath"
 
-	"github.com/virtlabs-io/dbcp-client/internal/config"
-	"github.com/virtlabs-io/dbcp-client/internal/logger"
-	"github.com/virtlabs-io/dbcp-client/internal/system"
+	"github.com/virtlabs-io/dbcp-agent/internal/config"
+	"github.com/virtlabs-io/dbcp-agent/internal/logger"
+	"github.com/virtlabs-io/dbcp-agent/internal/system"
 )
 
 func InstallPostgreSQL(cfg *config.AgentConfig, osInfo *system.OSInfo) error {
