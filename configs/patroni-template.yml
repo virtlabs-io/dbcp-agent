@@ -1,51 +1,82 @@
-scope: {{ .ClusterName }}
-name: {{ .NodeName }}
+scope: {{ .Cluster.Name }}
+namespace: {{ .Node.Patroni.Namespace }}
+name: {{ .Node.Name }}
 
 restapi:
-  listen: {{ .APIListen }}
-  connect_address: {{ .APIListen }}
+  listen: {{ .Node.Patroni.APIListen }}:{{ .Node.Patroni.Port }}
+  connect_address: {{ .Node.Host }}:{{ .Node.Patroni.Port }}
+  # auth: 'username:password'  # Basic auth for API
 
-etcd:
-  host: {{ .EtcdHost }}
+etcd3:
+  hosts: [{{ .EtcdHosts }}]
+  # protocol: https
+  # api_version: v3
+  # cacert: /etc/etcd/ssl/ca.pem
+  # cert: /etc/etcd/ssl/client.pem
+  # key: /etc/etcd/ssl/client-key.pem
+
 
 bootstrap:
   dcs:
-    ttl: {{ .DCS.TTL }}
-    loop_wait: {{ .DCS.LoopWait }}
-    retry_timeout: {{ .DCS.RetryTimeout }}
-    maximum_lag_on_failover: {{ .DCS.MaximumLagOnFailover }}
+    ttl: {{ .Node.Patroni.DCS.TTL }}
+    loop_wait: {{ .Node.Patroni.DCS.LoopWait }}
+    retry_timeout: {{ .Node.Patroni.DCS.RetryTimeout }}
+    maximum_lag_on_failover: {{ .Node.Patroni.DCS.MaximumLagOnFailover }}
     postgresql:
-      use_pg_rewind: {{ .UsePGRewind }}
-      use_slots: {{ .UseSlots }}
+      use_pg_rewind: {{ .Node.PostgreSQL.Parameters.UsePGRewind }}
+      use_slots: {{ .Node.PostgreSQL.Parameters.UseSlots }}
+      parameters:
+        max_connections: 200
+        unix_socket_directories: {{ .Node.TmpPath }}
+        wal_level: {{ .Node.PostgreSQL.Parameters.WALLevel }}
+        hot_standby: {{ .Node.PostgreSQL.Parameters.HotStandby }}
+        synchronous_commit: {{ .Node.PostgreSQL.Parameters.SynchronousCommit }}
+        synchronous_standby_names: "{{ .Node.PostgreSQL.Parameters.SynchronousStandbyNames }}"
+
 
   initdb:
 {{- range .InitDB }}
     - {{ . }}
 {{- end }}
 
+
   users:
-    admin:
-      username: {{ .AdminUser.Username }}
-      password: {{ .AdminUser.Password }}
+{{- range $username, $user := .Node.PostgreSQL.Users }}
+    {{ $username }}:
+      password: {{ $user.Password }}
       options:
-{{- range .AdminUser.Options }}
+{{- range $user.Options }}
         - {{ . }}
 {{- end }}
+{{- end }}
+
+  pg_hba:
+{{- range .PGHBA }}
+    - {{ . }}
+{{- end }}
+
 
 postgresql:
-  listen: {{ .Host }}:{{ .PGPort }}
-  connect_address: {{ .Host }}:{{ .PGPort }}
-  data_dir: {{ .PGDataDir }}
-  bin_dir: {{ .PGBinDir }}
+  listen: {{ .Node.Host }}:{{ .Node.PostgreSQL.Parameters.Port }}
+  connect_address: {{ .Node.Host }}:{{ .Node.PostgreSQL.Parameters.Port }}
+  data_dir: {{ .Node.PostgreSQL.DataDir }}
+  bin_dir: {{ .Node.PostgreSQL.BinPath }}
 
   authentication:
     superuser:
-      username: {{ .SuperUser.Username }}
-      password: {{ .SuperUser.Password }}
+      username: {{ .Node.Patroni.Authentication.Superuser.Username }}
+      password: {{ .Node.Patroni.Authentication.Superuser.Password }}
     replication:
-      username: {{ .Replication.Username }}
-      password: {{ .Replication.Password }}
+      username: {{ .Node.Patroni.Authentication.Replication.Username }}
+      password: {{ .Node.Patroni.Authentication.Replication.Password }}
 
-  parameters:
-    wal_level: replica
-    hot_standby: "on"
+create_replica_methods:
+{{- range .Node.Patroni.CreateReplicaMethods }}
+  - {{ . }}
+{{- end }}
+
+tags:
+  nofailover: {{ .Node.Patroni.Tags.NoFailover }}
+  noloadbalance: {{ .Node.Patroni.Tags.NoLoadBalance }}
+  clonefrom: {{ .Node.Patroni.Tags.CloneFrom }}
+  nosync: {{ .Node.Patroni.Tags.NoSync }}

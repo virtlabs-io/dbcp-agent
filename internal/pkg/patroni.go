@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"text/template"
 
@@ -18,19 +19,30 @@ type PatroniTemplateData struct {
 	Cluster   config.ClusterConfig
 	Node      config.NodeConfig
 	Host      string
-	EtcdHost  string
+	EtcdHosts string // comma-separated list of etcd endpoints for etcd3
+
+	// Patroni API
+	APIListen string
+
+	// PostgreSQL details
 	PGPort    int
 	PGDataDir string
 	PGBinDir  string
-	APIListen string
 
-	SuperUser   config.PatroniUser
-	Replication config.PatroniUser
-	AdminUser   config.PatroniUser
-	InitDB      []string
-	UsePGRewind bool
-	UseSlots    bool
-	DCS         config.DCSSettings
+	// Users
+	PGUsers     map[string]config.PostgresUser // All defined PostgreSQL users
+	SuperUser   config.UserCredentials         // for authentication.superuser
+	Replication config.UserCredentials         // for authentication.replication
+
+	// Init and DCS
+	InitDB      []string         // initdb steps
+	PGHBA       []string         // initdb steps
+	UsePGRewind bool             // from parameters
+	UseSlots    bool             // from parameters
+	DCS         config.DCSConfig // ttl, loop_wait, etc.
+
+	// PostgreSQL runtime parameters
+	Parameters config.PostgresSettings
 }
 
 func InstallPatroni(cfg *config.AgentConfig) error {
@@ -75,28 +87,58 @@ func installViaPip(pkg string) error {
 	return nil
 }
 
-func GeneratePatroniConfig(cfg *config.AgentConfig, templatePath string) error {
+func GeneratePatroniConfig(cfg *config.AgentConfig) error {
 	p := cfg.Node.Patroni
 
-	tmplData := PatroniTemplateData{
-		Node:        cfg.Node,
-		Cluster:     cfg.Cluster,
-		Host:        cfg.Node.Host,
-		EtcdHost:    p.EtcdHost,
-		PGPort:      p.PGPort,
-		PGDataDir:   cfg.Node.PostgreSQL.DataDir,
-		PGBinDir:    cfg.Node.PostgreSQL.BinPath,
-		APIListen:   p.APIListen,
-		SuperUser:   p.Superuser,
-		Replication: p.Replication,
-		AdminUser:   p.AdminUser,
-		InitDB:      p.InitDB,
-		UsePGRewind: p.UsePGRewind,
-		UseSlots:    p.UseSlots,
-		DCS:         p.DCS,
+	// Construct ETCD hosts list from all cluster nodes
+	etcdPort := cfg.Node.ETCD.ClientPort
+	var etcdHosts []string
+	for _, node := range cfg.Cluster.Nodes {
+		etcdHosts = append(etcdHosts, fmt.Sprintf(" %s:%d", node.Host, etcdPort))
 	}
 
-	tmpl, err := template.ParseFiles(templatePath)
+	var initDB []string
+	for _, item := range cfg.Node.PostgreSQL.InitDB {
+		for k, v := range item {
+			if v == "" {
+				initDB = append(initDB, k)
+			} else {
+				initDB = append(initDB, fmt.Sprintf("%s: %s", k, v))
+			}
+		}
+	}
+
+	// var pgHBA []string
+	// for _, item := range cfg.Node.PostgreSQL.PGHBA {
+	// 	pgHBA = append(pgHBA, item)
+	// }
+
+	tmplData := PatroniTemplateData{
+		Cluster:   cfg.Cluster,
+		Node:      cfg.Node,
+		Host:      cfg.Node.Host,
+		EtcdHosts: strings.Join(etcdHosts, ","), // pre-formatted string: "http://host1:2379","http://host2:2379"
+		APIListen: cfg.Node.Patroni.APIListen,
+		PGPort:    cfg.Node.PostgreSQL.Parameters.Port,
+		PGDataDir: cfg.Node.PostgreSQL.DataDir,
+		PGBinDir:  cfg.Node.PostgreSQL.BinPath,
+
+		// Users
+		PGUsers:     cfg.Node.PostgreSQL.Users,
+		SuperUser:   cfg.Node.Patroni.Authentication.Superuser,
+		Replication: cfg.Node.Patroni.Authentication.Replication,
+
+		// Init & cluster settings
+		InitDB:      initDB,
+		PGHBA:       cfg.Node.PostgreSQL.PGHBA,
+		UsePGRewind: cfg.Node.PostgreSQL.Parameters.UsePGRewind,
+		UseSlots:    cfg.Node.PostgreSQL.Parameters.UseSlots,
+		DCS:         cfg.Node.Patroni.DCS,
+		Parameters:  cfg.Node.PostgreSQL.Parameters,
+	}
+
+	tmpl, err := template.ParseFiles(cfg.Node.Patroni.TemplatePath)
+	logger.Debug("Template path: %s", cfg.Node.Patroni.TemplatePath)
 	if err != nil {
 		return fmt.Errorf("failed to load template: %w", err)
 	}
@@ -118,7 +160,7 @@ func GeneratePatroniConfig(cfg *config.AgentConfig, templatePath string) error {
 	return nil
 }
 
-func StartPatroni(cfg *config.AgentConfig) error {
+func StartPatroni2(cfg *config.AgentConfig) error {
 	configPath := cfg.Node.Patroni.ConfigPath
 	binary := "patroni"
 
@@ -142,6 +184,47 @@ func StartPatroni(cfg *config.AgentConfig) error {
 	return nil
 }
 
+func StartPatroni(cfg *config.AgentConfig) error {
+	bin := "patroni"
+	user := cfg.Node.User
+	configPath := cfg.Node.Patroni.ConfigPath
+
+	if configPath == "" {
+		return fmt.Errorf("patroni.config_path must be defined")
+	}
+
+	if _, err := os.Stat(configPath); err != nil {
+		return fmt.Errorf("patroni config not found at %s: %v", configPath, err)
+	}
+
+	logger.Info("Starting Patroni using user: %s", user)
+	cmd := exec.Command("sudo", "-u", user, bin, configPath)
+
+	logFile := filepath.Join(cfg.Node.TmpPath, "patroni.log")
+	log, err := os.OpenFile(logFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("failed to open patroni log file: %v", err)
+	}
+	cmd.Stdout = log
+	cmd.Stderr = log
+
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("failed to start Patroni: %w", err)
+	}
+
+	logger.Info("Patroni started with PID %d", cmd.Process.Pid)
+
+	// Set PG data dir to 0700
+	dataDir := cfg.Node.PostgreSQL.DataDir
+	if err := os.Chmod(dataDir, 0700); err != nil {
+		logger.Warn("Failed to chmod PostgreSQL data dir (%s) to 0700: %v", dataDir, err)
+	} else {
+		logger.Info("PostgreSQL data directory permissions set to 0700")
+	}
+
+	return nil
+}
+
 func StartPatroniDaemon(cfg *config.AgentConfig) error {
 	configPath := cfg.Node.Patroni.ConfigPath
 	binary := "patroni"
@@ -149,13 +232,10 @@ func StartPatroniDaemon(cfg *config.AgentConfig) error {
 	logger.Info("Launching Patroni as daemon with config: %s", configPath)
 
 	cmd := exec.Command(binary, configPath)
-
-	// Detach process group (make Patroni independent from agent)
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Setsid: true,
 	}
 
-	// Redirect output
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
@@ -164,5 +244,14 @@ func StartPatroniDaemon(cfg *config.AgentConfig) error {
 	}
 
 	logger.Info("Patroni started with PID: %d", cmd.Process.Pid)
+
+	// Set PG data dir to 0700
+	dataDir := cfg.Node.PostgreSQL.DataDir
+	if err := os.Chmod(dataDir, 0700); err != nil {
+		logger.Warn("Failed to chmod PostgreSQL data dir (%s) to 0700: %v", dataDir, err)
+	} else {
+		logger.Info("PostgreSQL data directory permissions set to 0700")
+	}
+
 	return nil
 }

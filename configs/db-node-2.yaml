@@ -1,3 +1,10 @@
+##################################################################################################
+#
+#
+#
+##################################################################################################
+
+############ Agent Log Configuration
 log_level: "debug"
 log_output: "stdout" # or "file"
 log_file_path: "/var/log/dbcp-agent.log"
@@ -5,23 +12,105 @@ log_max_size_mb: 10 # max log file size before rotating
 log_max_backups: 3 # number of old logs to keep
 log_max_age_days: 7 # days to keep old logs
 
+
+############ Local Node Configuration
 node:
+  name: "node2"
   host: "192.168.56.102"
   role: "database"
+  os_user: "vagrant"   # The OS user that will run all the services
   tmp_path: /dbcp/tmp
+  allow_restart_services: true  # or false
 
+
+############ PostgreSQL Configuration
   postgresql:
     version: "16"
-    user: "postgres" # The OS user that will run all the services
     data_dir: "/dbcp/data/pgsql"
     bin_path: "/usr/lib/postgresql/16/bin"
+    users:
+      postgres:
+        password: "qaz123"
+        options:
+          - superuser
+      admin:  # Superuser role
+        password: "qaz123"
+        options:
+          - createrole
+          - createdb
+          - login
+          - superuser
+      app_user:  # Application user
+        password: "qaz123"
+        options:
+          - login
+          - createdb
+      replicator:  # Replication user
+        password: "qaz123"
+        options:
+          - replication
+          - login
+      monitor:  # Monitoring user
+        password: "qaz123"
+        options:
+          - login
 
+    parameters:
+      port: 5432
+      max_connections: 200
+      use_pg_rewind: true
+      use_slots: true
+      wal_level: logical
+      hot_standby: true
+      synchronous_commit: "remote_apply"
+      synchronous_standby_names: "1 (node2,node3)"
+
+    initdb:
+      - encoding: UTF8
+      - locale: en_US.UTF-8
+      - data-checksums: ""    # Need to make data-checksums a key with a null or empty value to avoid unmarshal errors!!
+
+    pg_hba:
+      - host replication replicator 192.168.56.0/24 scram-sha-256
+      - host all         all        192.168.56.0/24 scram-sha-256
+
+
+############ Patroni Configuration
+  patroni:
+    version: "4.0.4"
+    namespace: "dbcp"
+    api_listen: "0.0.0.0"
+    port: 8008
+    config_path: "/etc/patroni/patroni.yml"
+    template_path: "/dbcp/config/patroni-template.yml"
+    dcs:
+      ttl: 30
+      loop_wait: 10
+      retry_timeout: 10
+      maximum_lag_on_failover: 1048576  # 1MB in bytes
+    authentication:
+      replication:
+        username: replicator
+        password: "qaz123"
+      superuser:
+        username: postgres
+        password: "qaz123"
+    create_replica_methods:
+      - basebackup
+      - pgbackrest
+    tags:
+      nofailover: false
+      noloadbalance: false
+      clonefrom: true        # Allows cloning from this node
+      nosync: false
+
+
+############ ETCD Configuration
   etcd:
     version: "3.5.20"
     cluster_mode: "bootstrap"  # bootstrap or join
     data_dir: "/dbcp/data/etcd"
     bin_path: "/opt/etcd/bin"
-    peer_name: "node2"
     # cert_file: "/etc/etcd/certs/etcd.crt"
     # key_file: "/etc/etcd/certs/etcd.key"
     # ca_file: "/etc/etcd/certs/ca.crt"
@@ -31,9 +120,8 @@ node:
     peer_port: 2380
     client_port: 2379
 
-  patroni:
-    config_path: "/etc/patroni/config.yml"
 
+############ Cluster Configuration
 cluster:
   name: "pg-cluster-01"
   nodes:
@@ -44,6 +132,8 @@ cluster:
     - name: node3
       host: "192.168.56.103"
 
+
+############ Repositories and Packages Configuration
 repositories:
   postgresql:
     default: "official" # or "custom"

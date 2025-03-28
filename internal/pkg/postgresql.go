@@ -31,10 +31,6 @@ func InstallPostgreSQL(cfg *config.AgentConfig, osInfo *system.OSInfo) error {
 		return fmt.Errorf("unsupported OS: %s", osInfo.ID)
 	}
 
-	if err := startPostgreSQLService(cfg); err != nil {
-		return err
-	}
-
 	logger.Info("PostgreSQL %s installation and startup complete.", cfg.Node.PostgreSQL.Version)
 	return nil
 }
@@ -50,6 +46,8 @@ func installPostgresApt(version, repoURL string) error {
 		fmt.Sprintf("apt-get install -y postgresql-%s", version),
 		"systemctl stop postgresql",
 		"systemctl disable postgresql",
+		"rm -Rf /etc/postgresql*",
+		"rm -Rf /var/lib/postgresql",
 	}
 
 	for _, cmd := range cmds {
@@ -82,7 +80,7 @@ func installPostgresRpm(version, osVersion, repoBaseURL, tmpPath string) error {
 	return nil
 }
 
-func startPostgreSQLService(cfg *config.AgentConfig) error {
+func StartPostgreSQLService(cfg *config.AgentConfig) error {
 	if isPortInUse(5432) {
 		if !cfg.Node.AllowRestartServices {
 			logger.Warn("PostgreSQL appears to be running. Aborting due to config.")
@@ -90,7 +88,7 @@ func startPostgreSQLService(cfg *config.AgentConfig) error {
 		}
 
 		logger.Warn("PostgreSQL appears to be running. Attempting to stop existing process...")
-		stopPostgresProcess(cfg) // maybe using pg_ctl stop or systemd
+		StopPostgresProcess(cfg) // maybe using pg_ctl stop or systemd
 	}
 
 	if _, err := exec.LookPath("systemctl"); err == nil {
@@ -106,13 +104,13 @@ func startPostgreSQLService(cfg *config.AgentConfig) error {
 
 	logger.Info("systemctl not found")
 
-	if err := ensureUser(cfg.Node.PostgreSQL.User); err != nil {
+	if err := ensureUser(cfg.Node.User); err != nil {
 		return err
 	}
 
 	chownCmd := exec.Command("chown", "-R", fmt.Sprintf("%s:%s",
-		cfg.Node.PostgreSQL.User,
-		cfg.Node.PostgreSQL.User),
+		cfg.Node.User,
+		cfg.Node.User),
 		cfg.Node.PostgreSQL.DataDir)
 	if output, err := chownCmd.CombinedOutput(); err != nil {
 		logger.Warn("Failed to chown data dir: %v\nOutput: %s", err, string(output))
@@ -122,7 +120,7 @@ func startPostgreSQLService(cfg *config.AgentConfig) error {
 	if _, err := os.Stat(filepath.Join(cfg.Node.PostgreSQL.DataDir, "PG_VERSION")); os.IsNotExist(err) {
 		logger.Warn("Initializing PostgreSQL data directory...")
 		cmd := exec.Command("su", "-",
-			cfg.Node.PostgreSQL.User,
+			cfg.Node.User,
 			"-c",
 			fmt.Sprintf("PATH=%s:$PATH %s/initdb -D %s",
 				cfg.Node.PostgreSQL.BinPath,
@@ -138,7 +136,7 @@ func startPostgreSQLService(cfg *config.AgentConfig) error {
 
 	logFile := filepath.Join(cfg.Node.PostgreSQL.DataDir, "postgres.log")
 	cmd := exec.Command("su", "-",
-		cfg.Node.PostgreSQL.User,
+		cfg.Node.User,
 		"-c",
 		fmt.Sprintf("PATH=%s:$PATH %s/pg_ctl -D %s -l %s start",
 			cfg.Node.PostgreSQL.BinPath,
@@ -189,7 +187,7 @@ func isPortInUse(port int) bool {
 	return false
 }
 
-func stopPostgresProcess(cfg *config.AgentConfig) {
+func StopPostgresProcess(cfg *config.AgentConfig) {
 	cmd := exec.Command(filepath.Join(cfg.Node.PostgreSQL.BinPath, "pg_ctl"),
 		"-D", cfg.Node.PostgreSQL.DataDir,
 		"stop")
