@@ -18,7 +18,6 @@ func TestInstallETCDMock(t *testing.T) {
 				Version:    "3.5.9",
 				BinPath:    "/tmp/etcd-test-bin",
 				DataDir:    "/tmp/etcd-data",
-				PeerName:   "test-node",
 				PeerPort:   2380,
 				ClientPort: 2379,
 			},
