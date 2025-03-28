@@ -129,7 +129,8 @@ make lint       # Lint the code (optional)
 
 - [x] PostgreSQL installer and service
 - [x] ETCD TLS cluster bootstrap/join
-- [ ] Patroni installer & cluster control
+- [x] Patroni installer
+- [ ] Cluster control
 - [ ] HAProxy installer & PostgreSQL routing config
 - [ ] Logical backups with pgBackRest
 - [ ] API Server for central orchestration
@@ -146,8 +147,6 @@ Want to contribute PostgreSQL/ETCD cluster logic, help build metrics exporters, 
 ## 🧑‍💻 Maintainer
 
 **Charly Batista**  
-President @ PostgreSQL Brazil Association  
-Founder @ Virtlabs Tecnologia
 
 ---
 
